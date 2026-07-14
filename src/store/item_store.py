@@ -1,3 +1,7 @@
+# All database access for the demo Item entity. Why it's here: same reasoning as
+# user_store.py — keeps queries out of route handlers — and it's the file to copy
+# when adding a new resource's store (see AGENTS.md for the full pattern).
+
 import uuid
 from datetime import datetime
 from typing import List, Optional
@@ -14,6 +18,9 @@ class ItemStore(BaseStore):
             return list(session.exec(select(Item).where(Item.user_id == user_id).order_by(Item.created_at.desc())))
 
     def get_for_user(self, item_id: str, user_id: str) -> Optional[Item]:
+        # Fetch by id, then check ownership in Python rather than filtering user_id in
+        # the query — this way a wrong-owner lookup and a nonexistent-id lookup return
+        # the exact same "not found" (see items_routes.py), which is what we want.
         with self.get_session() as session:
             item = session.get(Item, item_id)
             if item and str(item.user_id) == str(user_id):
@@ -33,10 +40,14 @@ class ItemStore(BaseStore):
             item = session.get(Item, item_id)
             if not item or str(item.user_id) != str(user_id):
                 return None
+            # Only overwrite fields that were actually passed — lets the route accept a
+            # partial update (e.g. title only, description left as-is).
             if title is not None:
                 item.title = title
             if description is not None:
                 item.description = description
+            # updated_at has no server-side auto-update trigger, so it must be set
+            # explicitly on every write path that changes a row.
             item.updated_at = datetime.utcnow()
             session.add(item)
             session.flush()

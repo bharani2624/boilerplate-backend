@@ -1,3 +1,8 @@
+# Demo CRUD entity. Why it's here: it exists purely to prove the auth + CRUD wiring works
+# end-to-end (model -> store -> route -> frontend) so you have a working reference to copy
+# when you build your real domain model during the builder round. Delete this file (and
+# item_store.py / items_routes.py / ItemsPanel.tsx) once you no longer need the example.
+
 import uuid
 from datetime import datetime
 from typing import Optional
@@ -17,6 +22,8 @@ class Item(SQLModel, table=True):
         default_factory=uuid.uuid4,
         sa_column=Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()),
     )
+    # Foreign key to the owning user — every query in item_store.py filters on this so one
+    # user can never read/edit/delete another user's rows.
     user_id: uuid.UUID = Field(foreign_key="public.users.id", index=True)
     title: str
     description: Optional[str] = Field(default=None)
@@ -31,6 +38,7 @@ class Item(SQLModel, table=True):
     )
 
     def to_dict(self) -> dict:
+        """JSON-safe representation for API responses (UUID/datetime aren't JSON-serializable as-is)."""
         return {
             "id": str(self.id),
             "user_id": str(self.user_id),

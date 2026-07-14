@@ -1,3 +1,8 @@
+# Demo CRUD routes for the Item entity. Why this file exists: it's the reference
+# implementation of the model -> store -> route pattern (see database/models/item.py
+# and src/store/item_store.py) — copy this file's shape when adding a new resource
+# during the builder round, then delete this one once you don't need the example.
+
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -16,12 +21,16 @@ class ItemCreateRequest(BaseModel):
 
 
 class ItemUpdateRequest(BaseModel):
+    # Both optional so PUT can be a partial update — omit a field to leave it unchanged
+    # (see ItemStore.update, which only overwrites fields that aren't None).
     title: Optional[str] = Field(default=None, description="New title")
     description: Optional[str] = Field(default=None, description="New description")
 
 
 @router.get("")
 def list_items(current_user: dict = Depends(get_current_user)):
+    # Scoped to current_user["user_id"] — every route below does the same, so one
+    # user can never see or touch another user's items.
     items = item_store.list_for_user(current_user["user_id"])
     data = [i.to_dict() for i in items]
     return {"status": "success", "data": data, "count": len(data)}
@@ -37,6 +46,8 @@ def create_item(body: ItemCreateRequest, current_user: dict = Depends(get_curren
 def get_item(item_id: str, current_user: dict = Depends(get_current_user)):
     item = item_store.get_for_user(item_id, current_user["user_id"])
     if not item:
+        # Also returned when the item exists but belongs to someone else — deliberately
+        # indistinguishable from "doesn't exist" so we don't leak which ids are in use.
         raise HTTPException(status_code=404, detail="Item not found")
     return {"status": "success", "data": item.to_dict()}
 
