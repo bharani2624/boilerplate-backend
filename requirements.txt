@@ -1,0 +1,15 @@
+fastapi>=0.118
+uvicorn[standard]>=0.34
+gunicorn>=23.0
+pydantic>=2.11
+pydantic-settings>=2.7
+
+sqlmodel>=0.0.24
+sqlalchemy>=2.0.36
+psycopg[binary]>=3.2.10
+
+python-jose[cryptography]==3.3.0
+google-auth==2.37.0
+requests>=2.32
+python-multipart==0.0.20
+python-dotenv==1.0.1
