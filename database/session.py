@@ -1,22 +1,29 @@
-"""Single shared engine for the Supabase Postgres database.
+"""Single shared async engine for the Supabase Postgres database.
 
 Why this file exists: every store (src/store/*.py) needs a database session, and they
 all need to share one connection pool rather than each opening its own. This module is
 the one place that creates the SQLAlchemy `engine` and hands out sessions from it.
+
+Async, not sync: psycopg3 (our driver, see requirements.txt) natively supports asyncio,
+so every route and store in this project is `async def` and awaits its database calls —
+that's what lets one worker process handle many concurrent requests without a query on
+one request blocking another (see AGENTS.md's "Concurrency" section for the full
+reasoning). `create_async_engine` + `AsyncSession` is the async equivalent of the
+`create_engine` + `Session` pair you'd use in a sync app.
 """
 
-from contextlib import contextmanager
-from typing import Generator
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator
 
-from sqlalchemy.engine import Engine
-from sqlmodel import Session, SQLModel, create_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
+from sqlmodel import SQLModel
 
 from config.settings import settings
 
 # pool_pre_ping=True: check a pooled connection is still alive before using it — Supabase's
 # pooler (and most managed Postgres) will silently drop idle connections, and without this
 # the first query after a lull would fail with "server closed the connection unexpectedly."
-engine: Engine = create_engine(
+engine: AsyncEngine = create_async_engine(
     settings.database_url,
     pool_size=settings.db_pool_size,
     max_overflow=settings.db_max_overflow,
@@ -24,32 +31,37 @@ engine: Engine = create_engine(
 )
 
 
-def create_db_and_tables() -> None:
+async def create_db_and_tables() -> None:
     """Create tables that don't exist yet. Safe to call on every startup.
 
     Every SQLModel class with table=True that has been imported (see
     database/models/__init__.py) registers itself on SQLModel.metadata; create_all
     only issues CREATE TABLE for the ones that aren't already in the database, so this
-    never touches tables that already exist.
+    never touches tables that already exist. run_sync is needed because create_all
+    itself is a synchronous SQLAlchemy call — this runs it against a sync-style proxy
+    of our async connection, which is the standard way to use metadata operations with
+    an async engine.
     """
-    SQLModel.metadata.create_all(engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
 
 
-@contextmanager
-def get_session() -> Generator[Session, None, None]:
+@asynccontextmanager
+async def get_session() -> AsyncGenerator[AsyncSession, None]:
     """Yield a session, commit on success, rollback on error, always close.
 
-    Stores use this as `with self.get_session() as session:` so none of them need to
-    remember to commit/rollback/close themselves — one bug here is fixed everywhere.
+    Stores use this as `async with self.get_session() as session:` so none of them
+    need to remember to commit/rollback/close themselves — one bug here is fixed
+    everywhere.
     """
     # expire_on_commit=False: objects stay usable after the `with` block commits/closes,
     # so routes/stores can return ORM objects without a detached-instance error.
-    session = Session(engine, expire_on_commit=False)
+    session = AsyncSession(engine, expire_on_commit=False)
     try:
         yield session
-        session.commit()
+        await session.commit()
     except Exception:
-        session.rollback()
+        await session.rollback()
         raise
     finally:
-        session.close()
+        await session.close()

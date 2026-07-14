@@ -5,10 +5,11 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from src.api.middleware.auth import get_current_user
+from src.services.background_tasks import log_item_created
 from src.store.item_store import ItemStore
 
 router = APIRouter()
@@ -28,23 +29,29 @@ class ItemUpdateRequest(BaseModel):
 
 
 @router.get("")
-def list_items(current_user: dict = Depends(get_current_user)):
+async def list_items(current_user: dict = Depends(get_current_user)):
     # Scoped to current_user["user_id"] — every route below does the same, so one
     # user can never see or touch another user's items.
-    items = item_store.list_for_user(current_user["user_id"])
+    items = await item_store.list_for_user(current_user["user_id"])
     data = [i.to_dict() for i in items]
     return {"status": "success", "data": data, "count": len(data)}
 
 
 @router.post("")
-def create_item(body: ItemCreateRequest, current_user: dict = Depends(get_current_user)):
-    item = item_store.create(current_user["user_id"], body.title, body.description)
+async def create_item(
+    body: ItemCreateRequest, background_tasks: BackgroundTasks, current_user: dict = Depends(get_current_user)
+):
+    item = await item_store.create(current_user["user_id"], body.title, body.description)
+    # Fire-and-forget: whatever you'd do on item creation (webhook, search-index
+    # update, notification) shouldn't make the caller wait for it. See
+    # src/services/background_tasks.py for what this pattern is and isn't good for.
+    background_tasks.add_task(log_item_created, user_id=current_user["user_id"], item_id=str(item.id))
     return {"status": "success", "data": item.to_dict()}
 
 
 @router.get("/{item_id}")
-def get_item(item_id: str, current_user: dict = Depends(get_current_user)):
-    item = item_store.get_for_user(item_id, current_user["user_id"])
+async def get_item(item_id: str, current_user: dict = Depends(get_current_user)):
+    item = await item_store.get_for_user(item_id, current_user["user_id"])
     if not item:
         # Also returned when the item exists but belongs to someone else — deliberately
         # indistinguishable from "doesn't exist" so we don't leak which ids are in use.
@@ -53,16 +60,16 @@ def get_item(item_id: str, current_user: dict = Depends(get_current_user)):
 
 
 @router.put("/{item_id}")
-def update_item(item_id: str, body: ItemUpdateRequest, current_user: dict = Depends(get_current_user)):
-    item = item_store.update(item_id, current_user["user_id"], body.title, body.description)
+async def update_item(item_id: str, body: ItemUpdateRequest, current_user: dict = Depends(get_current_user)):
+    item = await item_store.update(item_id, current_user["user_id"], body.title, body.description)
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
     return {"status": "success", "data": item.to_dict()}
 
 
 @router.delete("/{item_id}")
-def delete_item(item_id: str, current_user: dict = Depends(get_current_user)):
-    ok = item_store.delete(item_id, current_user["user_id"])
+async def delete_item(item_id: str, current_user: dict = Depends(get_current_user)):
+    ok = await item_store.delete(item_id, current_user["user_id"])
     if not ok:
         raise HTTPException(status_code=404, detail="Item not found")
     return {"status": "success", "data": {"id": item_id}}

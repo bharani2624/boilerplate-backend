@@ -7,15 +7,19 @@ change the SQLModel class and expect the column to appear — create_all only cr
 missing tables, it never alters existing ones. These helpers wrap the raw ALTER TABLE
 SQL so migrations.py can call them without every migration re-implementing the
 "check if it already exists" guard (which is what makes re-running migrations safe).
+
+Async: these run against the same AsyncEngine as everything else (see
+database/session.py) — engine.connect() here opens an AsyncConnection, and every
+statement is awaited, consistent with the rest of the app.
 """
 
 from sqlalchemy import text
-from sqlalchemy.engine import Engine
 from sqlalchemy.exc import ProgrammingError
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 
-def add_column(
-    engine: Engine,
+async def add_column(
+    engine: AsyncEngine,
     table_name: str,
     column_name: str,
     column_type: str,
@@ -29,11 +33,11 @@ def add_column(
         SELECT column_name FROM information_schema.columns
         WHERE table_schema = :schema AND table_name = :table AND column_name = :column
     """
-    with engine.connect() as conn:
-        exists = conn.execute(
+    async with engine.connect() as conn:
+        result = await conn.execute(
             text(check_sql), {"schema": schema, "table": table_name, "column": column_name}
-        ).fetchone()
-        if exists:
+        )
+        if result.fetchone():
             return
 
         alter_sql = f"ALTER TABLE {full_table_name} ADD COLUMN {column_name} {column_type}"
@@ -43,36 +47,36 @@ def add_column(
             alter_sql += f" DEFAULT {default_value}"
 
         try:
-            conn.execute(text(alter_sql))
-            conn.commit()
+            await conn.execute(text(alter_sql))
+            await conn.commit()
         except ProgrammingError as e:
             # 42701 = duplicate_column: another process/instance added it between our
             # existence check and this statement (e.g. two app instances starting at once
             # on Render). Treat that as success rather than crashing startup.
             if getattr(e.orig, "pgcode", None) == "42701":
-                conn.rollback()
+                await conn.rollback()
             else:
                 raise
 
 
-def drop_column(engine: Engine, table_name: str, column_name: str, schema: str = "public"):
+async def drop_column(engine: AsyncEngine, table_name: str, column_name: str, schema: str = "public"):
     """ALTER TABLE ... DROP COLUMN, but only if the column is actually present."""
     full_table_name = f"{schema}.{table_name}"
     check_sql = """
         SELECT column_name FROM information_schema.columns
         WHERE table_schema = :schema AND table_name = :table AND column_name = :column
     """
-    with engine.connect() as conn:
-        exists = conn.execute(
+    async with engine.connect() as conn:
+        result = await conn.execute(
             text(check_sql), {"schema": schema, "table": table_name, "column": column_name}
-        ).fetchone()
-        if exists:
-            conn.execute(text(f"ALTER TABLE {full_table_name} DROP COLUMN {column_name}"))
-            conn.commit()
+        )
+        if result.fetchone():
+            await conn.execute(text(f"ALTER TABLE {full_table_name} DROP COLUMN {column_name}"))
+            await conn.commit()
 
 
-def create_index(
-    engine: Engine,
+async def create_index(
+    engine: AsyncEngine,
     table_name: str,
     column_names: list[str],
     index_name: str = None,
@@ -86,22 +90,22 @@ def create_index(
         SELECT indexname FROM pg_indexes
         WHERE schemaname = :schema AND tablename = :table AND indexname = :index
     """
-    with engine.connect() as conn:
-        exists = conn.execute(
+    async with engine.connect() as conn:
+        result = await conn.execute(
             text(check_sql), {"schema": schema, "table": table_name, "index": index_name}
-        ).fetchone()
-        if exists:
+        )
+        if result.fetchone():
             return
         unique_str = "UNIQUE " if unique else ""
         columns_str = ", ".join(column_names)
-        conn.execute(text(f"CREATE {unique_str}INDEX {index_name} ON {full_table_name} ({columns_str})"))
-        conn.commit()
+        await conn.execute(text(f"CREATE {unique_str}INDEX {index_name} ON {full_table_name} ({columns_str})"))
+        await conn.commit()
 
 
-def execute_sql(engine: Engine, sql: str):
+async def execute_sql(engine: AsyncEngine, sql: str):
     """Escape hatch for one-off SQL that doesn't fit add_column/drop_column/create_index
     (e.g. data backfills, constraint changes). No idempotency guard — write the SQL
     itself defensively (IF NOT EXISTS / IF EXISTS) if it needs to be safe to re-run."""
-    with engine.connect() as conn:
-        conn.execute(text(sql))
-        conn.commit()
+    async with engine.connect() as conn:
+        await conn.execute(text(sql))
+        await conn.commit()

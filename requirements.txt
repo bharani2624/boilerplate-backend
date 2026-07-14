@@ -5,7 +5,7 @@ pydantic>=2.11
 pydantic-settings>=2.7
 
 sqlmodel>=0.0.24
-sqlalchemy>=2.0.36
+sqlalchemy[asyncio]>=2.0.36
 psycopg[binary]>=3.2.10
 
 python-jose[cryptography]==3.3.0
