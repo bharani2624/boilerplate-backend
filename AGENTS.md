@@ -332,3 +332,58 @@ uvicorn src.api.app:app --reload --port 8000
 ```
 
 No Docker required for local dev — the Dockerfile is only for deploying to Render.
+
+## Deployment (Render)
+
+Deploying is a Render **Web Service** pointed at this repo's `Dockerfile` — Render
+auto-detects Docker and the exposed port (`EXPOSE 8000`) with no manual port config
+needed. Steps: New → Web Service → connect the GitHub repo → confirm Docker is
+detected → pick region/instance → add env vars → set Health Check Path → Deploy.
+
+**Instance type: stick to Free unless a specific reason says otherwise.** Free
+instances spin down after ~15 minutes of inactivity and take ~30-50s to wake on the
+next request — expected behavior, not a bug; hit `/api/health` before a demo to warm
+it up. This project intentionally only uses the Free tier — don't upgrade an instance
+to a paid type as a "fix" for cold starts without being asked to.
+
+**Env vars to set on Render** (same keys as `.env`, pasted via the "Add from .env"
+button in the dashboard rather than typed one at a time):
+```
+ENVIRONMENT=production
+DATABASE_URL=<your Supabase connection string>
+DB_POOL_SIZE=5
+DB_MAX_OVERFLOW=5
+JWT_SECRET_KEY=<same value as local .env>
+JWT_ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRY_MINUTES=43200
+GOOGLE_CLIENT_ID=<your Google OAuth client id>
+API_CORS_ORIGINS=<comma-separated frontend origins, e.g. http://localhost:3000,https://your-frontend.onrender.com>
+```
+Health Check Path: `/api/health` (this route is intentionally excluded from auth — see
+`src/api/routes/health.py`).
+
+**Known snag #1 — Render's GitHub App may not see this repo.** Render's GitHub
+integration is a GitHub App installation, separate per GitHub account/org, and it only
+sees repos it's been explicitly granted access to. If the repo picker in Render's "New
+Web Service" flow shows a different account's repos (or is missing this one), the App
+isn't installed on the account that owns this repo. Fix: from Render's Git Provider
+picker, open the credentials dropdown → the connected account → **Configure in
+GitHub** (or go directly to `https://github.com/apps/render/installations/new`),
+select the correct account/org, and make sure **Repository access** is "All
+repositories" (or explicitly includes this one). Render's repo list updates
+immediately once that's granted — no need to restart the "New Web Service" flow.
+
+**Known snag #2 — a leftover empty env var row blocks deploy.** If you clicked into
+the "NAME_OF_VARIABLE" input before using "Add from .env", that empty row stays in the
+form (marked "Required" in red) even after the paste adds the real variables below it.
+The **Deploy Web Service** button will silently fail with "There are errors above" until
+that empty row is deleted (trash icon on its row) — scroll back up and check for it if
+deploy doesn't move to a build.
+
+**Card verification is required even for Free instances.** This is Render's anti-abuse
+policy, not specific to this project, and every other mainstream host with a real Docker
+free tier (Fly.io, Railway) has the same requirement now — switching providers doesn't
+avoid it. It's a $1 authorization hold, never an actual charge, as long as the instance
+type stays Free. GCP Cloud Run's free tier is a legitimate alternative (more generous,
+doesn't expire like a trial) but requires more manual setup (push to Artifact Registry,
+no "connect GitHub repo" flow) and still requires billing to be enabled on the project.

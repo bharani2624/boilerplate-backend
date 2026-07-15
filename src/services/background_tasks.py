@@ -13,7 +13,7 @@ needs tasks to survive a restart, run on a schedule, or retry on failure, that's
 point where you'd introduce a real queue (Celery/RQ/arq + Redis) instead of this —
 don't reach for that ahead of time.
 
-Usage pattern (see src/api/routes/auth_routes.py and items_routes.py):
+Usage pattern (see src/api/routes/auth_routes.py):
 
     from fastapi import BackgroundTasks
     from src.services.background_tasks import log_login_event
@@ -40,7 +40,6 @@ def log_login_event(user_id: str, email: str) -> None:
     logger.info("login user_id=%s email=%s", user_id, email)
 
 
-def log_item_created(user_id: str, item_id: str) -> None:
-    """Example background task fired after creating an Item. Replace with something
-    real (e.g. a webhook call, a search-index update) when you build your own entity."""
-    logger.info("item_created user_id=%s item_id=%s", user_id, item_id)
+def log_promo_applied(user_id: str, code: str) -> None:
+    """Optional background log when a promo is successfully applied to a cart."""
+    logger.info("promo_applied user_id=%s code=%s", user_id, code)

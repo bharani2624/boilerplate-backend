@@ -1,5 +1,5 @@
 # Login + current-user routes. Why this file exists: it's the one place that turns a
-# Google identity into our own session — everything downstream (items_routes.py, any
+# Google identity into our own session — everything downstream (cart_routes.py, any
 # new route you add) only ever deals with our JWT via get_current_user, never Google's
 # token directly.
 

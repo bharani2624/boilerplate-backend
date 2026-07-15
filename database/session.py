@@ -20,14 +20,25 @@ from sqlmodel import SQLModel
 
 from config.settings import settings
 
+# Register every table model on SQLModel.metadata before create_all runs.
+import database.models  # noqa: F401, E402
+
 # pool_pre_ping=True: check a pooled connection is still alive before using it — Supabase's
 # pooler (and most managed Postgres) will silently drop idle connections, and without this
 # the first query after a lull would fail with "server closed the connection unexpectedly."
+#
+# prepare_threshold=None: disable psycopg3 prepared statements. Required for Supabase's
+# transaction-mode pooler (port 6543 / PgBouncer). With prepared statements on, a later
+# query can reuse a portal typed for a previous query — e.g. a UUID bind from a cart
+# PK lookup bleeding into a promo-code TEXT lookup, which surfaces as:
+#   invalid input syntax for type uuid: "SAVE10"
+# even though promos.code is TEXT and the SQL text says WHERE code = ...
 engine: AsyncEngine = create_async_engine(
     settings.database_url,
     pool_size=settings.db_pool_size,
     max_overflow=settings.db_max_overflow,
     pool_pre_ping=True,
+    connect_args={"prepare_threshold": None},
 )
 
 
